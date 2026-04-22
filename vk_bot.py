@@ -2,10 +2,10 @@ import vk_api
 import time
 import logging
 import threading
-from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType # <-- ИСПРАВЛЕНО ЗДЕСЬ
+from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 
 # --- ⚙️ НАСТРОЙКИ ⚙️ ---
-GROUP_TOKEN = 'vk1.a.63gRKaofhLXxItbjXWRcbNVwOsjxuMM8lq2wfge5nLscGQ4CPK6VbaU3loh1UPbNE2rjxt3vcDoaOjc2KFaShDfYKFldqUz2J3qVVilyj_stqbnNGE2NqRwYxY8DkU3StollkCK3cOvi-dixk92XSiI8OtNOmH_zmbF2mB3EShA4bBhmmrYhQwmUm7uyvujlkIQIJX2V8q_Dd2V45yzKJw'
+GROUP_TOKEN = 'vk1.a.63gRKaofhLXxItbjXWRcbNVwOsjxuMM8lq2wfge5nLscGQ4CPK6VbaU3loh1UPbNE2rjxt3vcDoaOjc2KFaShDfYKFldqUz2J3qVVilyj_stqbnNGE2NqRwYxY8DkU3StollkCK3cOvi-dixk92XSiI8OtNOmH_zmbFmB3EShA4bBhmmrYhQwmUm7uyvujlkIQIJX2V8q_Dd2V45yzKJw'
 GROUP_ID = 237218521
 PEER_ID = 2000000001 # ЗАМЕНИ НА ID СВОЕЙ БЕСЕДЫ
 
@@ -13,7 +13,8 @@ MAIN_COMMAND = "/клан казна положить 10000000"
 FALLBACK_COMMAND = "/клан казна снять 1364800000"
 TRIGGER_INSUFFICIENT_FUNDS = "❌ Недостаточно средств!"
 STOP_COMMAND = "/stop_bot"
-INTERVAL = 2
+INTERVAL = 5 # Увеличим интервал, чтобы избежать блокировки
+MONITOR_SLEEP = 2 # Задержка для потока мониторинга
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -25,13 +26,14 @@ def send_message(vk, peer_id, message):
     try:
         vk.messages.send(peer_id=peer_id, message=message, random_id=0)
         logger.info(f"📤 Отправлено: {message}")
+        return True # Вернуть успех
     except Exception as e:
         logger.error(f"❌ Ошибка отправки: {e}")
+        return False # Вернуть неудачу
 
 def monitor_chat(vk):
     """
-    Поток, который постоянно следит за чатом.
-    Обрабатывает ошибку доступа к истории.
+    Поток для мониторинга чата с задержкой.
     """
     global last_message_id, should_stop
     logger.info("👁️‍🗨️ Старт мониторинга чата...")
@@ -49,19 +51,21 @@ def monitor_chat(vk):
                 text = msg.get('text', '')
 
                 if TRIGGER_INSUFFICIENT_FUNDS in text:
-                    logger.info("🚨 ТРИГГЕР ОБНАРУЖЕН! Отправка fallback-команды...")
-                    send_message(vk, PEER_ID, FALLBACK_COMMAND)
+                    logger.info("🚨 ТРИГГЕР ОБНАРУЖЕН! Попытка отправки fallback-команды...")
+                    success = send_message(vk, PEER_ID, FALLBACK_COMMAND)
+                    if not success:
+                        logger.warning("⚠️ Не удалось отправить fallback-команду. Повторим позже.")
 
         except Exception as e:
-            # --- НОВОЕ: Обработка ошибки доступа ---
-            error_code = str(e)
-            if "[15] Access denied" in error_code or "access denied" in error_code.lower():
-                logger.warning("⚠️ Нет прав на чтение истории чата. Бот будет продолжать попытки.")
-                # Не выходим из цикла, просто ждем и пробуем снова
+            error_msg = str(e).lower()
+            if "access denied" in error_msg or "[15]" in error_msg:
+                logger.warning("⚠️ Нет прав на чтение истории. Повтор через 10 сек.")
+                time.sleep(10) # Ждем дольше при ошибке доступа
             else:
                 logger.error(f"⚠️ Ошибка при мониторинге: {e}")
+                time.sleep(5)
         
-        time.sleep(1) # Пауза перед следующей попыткой проверки
+        time.sleep(MONITOR_SLEEP) # Обязательная пауза для снижения нагрузки
 
     logger.info("🔒 Мониторинг чата остановлен.")
 
@@ -71,12 +75,10 @@ def main():
     vk_session = vk_api.VkApi(token=GROUP_TOKEN)
     vk = vk_session.get_api()
 
-    # Запускаем поток мониторинга чата ПЕРВЫМ
     monitor_thread = threading.Thread(target=monitor_chat, args=(vk,))
     monitor_thread.start()
 
-    # Инициализация LongPoll здесь, после исправления импорта
-    longpoll = VkBotLongPoll(vk_session, GROUP_ID) 
+    longpoll = VkBotLongPoll(vk_session, GROUP_ID)
 
     logger.info("✅ Бот запущен. Мониторинг активен.")
 
@@ -84,6 +86,7 @@ def main():
         try:
             send_message(vk, PEER_ID, MAIN_COMMAND)
             
+            # Пауза между отправками основной команды
             for _ in range(INTERVAL):
                 if should_stop:
                     break
@@ -97,14 +100,13 @@ def main():
                                 send_message(vk, event.obj.message['peer_id'], "🛑 Бот остановлен.")
                                 logger.info("🛑 Остановка по команде /stop_bot.")
                 except Exception as e:
-                    # Игнорируем таймауты и другие мелкие ошибки проверки событий
-                    pass
+                    pass # Игнорируем ошибки LongPoll
 
                 time.sleep(1)
 
         except Exception as e:
-            logger.error(f"💥 Критическая ошибка в основном цикле: {e}")
-            time.sleep(INTERVAL)
+            logger.error(f"💥 Критическая ошибка: {e}")
+            time.sleep(INTERVAL * 2) # Пауза дольше при критической ошибке
 
     should_stop = True
     monitor_thread.join()
