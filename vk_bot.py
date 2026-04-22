@@ -10,8 +10,8 @@ GROUP_TOKEN = 'vk1.a.63gRKaofhLXxItbjXWRcbNVwOsjxuMM8lq2wfge5nLscGQ4CPK6VbaU3loh
 GROUP_ID = 237218521 
 PEER_ID = 2000000001 
 
-MAIN_COMMAND = "/клан принять 1"
-FALLBACK_COMMAND = "/клан казна снять 1364800000"
+MAIN_COMMAND = "/клан принять 10000000000"
+FALLBACK_COMMAND = "/клан казна снять 110000000000"
 TRIGGER_INSUFFICIENT_FUNDS = "❌ Недостаточно средств!"
 STOP_COMMAND = "/stop_bot"
 INTERVAL = 2
