@@ -14,7 +14,7 @@ MAIN_COMMAND = "/клан казна положить 10000000"
 FALLBACK_COMMAND = "/клан казна снять 1364800000"
 TRIGGER_INSUFFICIENT_FUNDS = "❌ Недостаточно средств!"
 STOP_COMMAND = "/stop_bot"
-INTERVAL = 5 
+INTERVAL = 2
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
