@@ -3,23 +3,33 @@ import time
 import logging
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# --- ⚙️ НАСТРОЙКИ БОТА (ИЗМЕНИТЕ ПОД СЕБЯ) ⚙️ ---
+GROUP_TOKEN = 'vk1.a.63gRKaofhLXxItbjXWRcbNVwOsjxuMM8lq2wfge5nLscGQ4CPK6VbaU3loh1UPbNE2rjxt3vcDoaOjc2KFaShDfYKFldqUz2J3qVVilyj_stqbnNGE2NqRwYxY8DkU3StollkCK3cOvi-dixk92XSiI8OtNOmH_zmbF2mB3EShA4bBhmmrYhQwmUm7uyvujlkIQIJX2V8q_Dd2V45yzKJw'  # Токен группы VK
+GROUP_ID = 237218521             # ID вашей группы (число)
+PEER_ID = 2000000001             # ID беседы (peer_id), куда писать
 
-# Конфигурация
-GROUP_TOKEN = 'vk1.a.63gRKaofhLXxItbjXWRcbNVwOsjxuMM8lq2wfge5nLscGQ4CPK6VbaU3loh1UPbNE2rjxt3vcDoaOjc2KFaShDfYKFldqUz2J3qVVilyj_stqbnNGE2NqRwYxY8DkU3StollkCK3cOvi-dixk92XSiI8OtNOmH_zmbF2mB3EShA4bBhmmrYhQwmUm7uyvujlkIQIJX2V8q_Dd2V45yzKJw'  # Замените на ваш токен группы
-PEER_ID = 2000000001  # Замените на ID беседы (peer_id)
+# Основные команды
+MAIN_COMMAND = "/клан казна положить 10000000"
+FALLBACK_COMMAND = "/клан снять 1364800000"
 
-# Интервал отправки (в секундах)
+# Триггер для fallback-команды
+TRIGGER_INSUFFICIENT_FUNDS = "❌Недостаточно Средств"
+
+# Интервал между отправками (в секундах)
 INTERVAL = 2
 
-# Сообщение для отправки
-MESSAGE = "/клан казна положить 10000000"
+# Команда для остановки бота
+STOP_COMMAND = "/stop_bot"
+# -------------------------------------------
 
-# Флаг для остановки бота
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 should_stop = False
-
 
 def send_message(vk, peer_id, message):
     """Отправляет сообщение в беседу."""
@@ -27,53 +37,42 @@ def send_message(vk, peer_id, message):
         vk.messages.send(
             peer_id=peer_id,
             message=message,
-            random_id=0  # Генерация нового random_id при каждом вызове
+            random_id=0
         )
-        logger.info(f"Сообщение отправлено: {message}")
+        logger.info(f"📤 Отправлено: {message}")
         return True
     except Exception as e:
-        logger.error(f"Ошибка при отправке сообщения: {e}")
+        logger.error(f"❌ Ошибка при отправке: {e}")
         return False
-
 
 def main():
     global should_stop
 
-    # Авторизация через токен группы
     vk_session = vk_api.VkApi(token=GROUP_TOKEN)
     vk = vk_session.get_api()
 
-    longpoll = VkBotLongPoll(vk_session, group_id=237218521)  # Укажите реальный ID группы (число)
-    logger.info("Бот запущен. Ожидание команд...")
+    longpoll = VkBotLongPoll(vk_session, group_id=GROUP_ID)
+    logger.info("✅ Бот запущен. Ожидание событий...")
 
     while not should_stop:
         try:
-            # Попробуем отправить сообщение
-            if send_message(vk, PEER_ID, MESSAGE):
-                pass  # Успешно отправлено
-            
-            # Ждём INTERVAL секунд перед следующей отправкой
+            # Отправляем основную команду
+            send_message(vk, PEER_ID, MAIN_COMMAND)
+
+            # Ждём INTERVAL секунд, проверяя входящие сообщения
             for _ in range(INTERVAL):
                 if should_stop:
                     break
-                time.sleep(1)
 
-            # Проверим, не пришло ли сообщение для остановки
-            for event in longpoll.check():
-                if event.type == VkBotEventType.MESSAGE_NEW:
-                    text = event.obj.message['text'].strip()
-                    if text.lower() == '/stop_bot':
-                        should_stop = True
-                        send_message(vk, event.obj.message['peer_id'], "Бот остановлен.")
-                        logger.info("Бот остановлен по команде.")
-                        break
+                for event in longpoll.check():
+                    if event.type == VkBotEventType.MESSAGE_NEW:
+                        text = event.obj.message['text'].strip()
+                        current_peer_id = event.obj.message['peer_id']
 
-        except Exception as e:
-            logger.error(f"Ошибка в основном цикле: {e}")
-            time.sleep(INTERVAL)  # Пауза перед повторной попыткой
+                        # Если пришло сообщение о недостатке средств — отправляем fallback
+                        if TRIGGER_INSUFFICIENT_FUNDS in text:
+                            send_message(vk, current_peer_id, FALLBACK_COMMAND)
 
-    logger.info("Работа бота завершена.")
-
-
-if __name__ == '__main__':
-    main()
+                        # Если команда на остановку — завершаем работу
+                        if text.lower() == STOP_COMMAND:
+                            should_stop = True
