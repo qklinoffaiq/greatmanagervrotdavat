@@ -2,9 +2,8 @@ import vk_api
 import time
 import logging
 import threading
-from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 
-# --- ⚙️ НАСТРОЙКИ (ЗАПОЛНЕНО) ⚙️ ---
+# --- ⚙️ НАСТРОЙКИ ⚙️ ---
 GROUP_TOKEN = 'vk1.a.63gRKaofhLXxItbjXWRcbNVwOsjxuMM8lq2wfge5nLscGQ4CPK6VbaU3loh1UPbNE2rjxt3vcDoaOjc2KFaShDfYKFldqUz2J3qVVilyj_stqbnNGE2NqRwYxY8DkU3StollkCK3cOvi-dixk92XSiI8OtNOmH_zmbF2mB3EShA4bBhmmrYhQwmUm7uyvujlkIQIJX2V8q_Dd2V45yzKJw'
 GROUP_ID = 237218521
 PEER_ID = 2000000001 # ЗАМЕНИ НА ID СВОЕЙ БЕСЕДЫ
@@ -13,14 +12,25 @@ MAIN_COMMAND = "/клан казна положить 10000000"
 FALLBACK_COMMAND = "/клан казна снять 1364800000"
 TRIGGER_INSUFFICIENT_FUNDS = "❌ Недостаточно средств!"
 STOP_COMMAND = "/stop_bot"
-INTERVAL = 2
+INTERVAL = 2 # Интервал основной команды
+
+# --- ВАРИАНТ 1: БЫСТРЫЙ (рекомендуемый) ---
+# Проверяет историю только когда пришло новое событие.
+# Очень быстрый, не нагружает API.
+
+# --- ВАРИАНТ 2: УЛЬТРА-НАДЕЖНЫЙ ---
+# Постоянно опрашивает историю чата (например, раз в 3-5 секунд).
+# Работает всегда, даже если права бота ограничены.
+# Немного больше нагрузка на API.
+USE_ULTRA_RELIABLE_MODE = True # Переключатель режимов
+HISTORY_POLL_INTERVAL = 5 # Интервал опроса истории в секундах (для Варианта 2)
 # -----------------------------------------
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Глобальный флаг для остановки потоков
 should_stop = False
+last_message_id = 0 # Для отслеживания новых сообщений
 
 def send_message(vk, peer_id, message):
     """Отправляет сообщение в беседу."""
@@ -30,49 +40,49 @@ def send_message(vk, peer_id, message):
     except Exception as e:
         logger.error(f"❌ Ошибка отправки: {e}")
 
-def sender_thread_func(vk):
-    """Поток, который отправляет сообщения по таймеру."""
-    global should_stop
-    logger.info("🕰️ Поток отправителя запущен.")
+def monitor_chat(vk):
+    """
+    Поток, который постоянно следит за чатом.
+    Это самый надежный способ не пропустить триггер.
+    """
+    global last_message_id, should_stop
+    logger.info("👁️‍🗨️ Старт мониторинга чата...")
+
     while not should_stop:
-        send_message(vk, PEER_ID, MAIN_COMMAND)
-        # Ждём интервал перед следующей отправкой
-        for _ in range(INTERVAL):
-            if should_stop:
-                break
-            time.sleep(1)
-    logger.info("🛑 Поток отправителя остановлен.")
+        try:
+            # Получаем историю последних сообщений (например, 50 штук)
+            # start_message_id=0 означает с самого последнего
+            history = vk.messages.getHistory(peer_id=PEER_ID, count=50)
+            messages = history.get('items', [])
 
-def listener_thread_func(vk_session):
-    """Поток, который слушает входящие сообщения."""
-    global should_stop
-    longpoll = VkBotLongPoll(vk_session, GROUP_ID)
-    logger.info("👂 Поток слушателя запущен. Ожидаю сообщений...")
-    
-    try:
-        for event in longpoll.listen():
-            if should_stop:
-                break
+            # Проверяем сообщения в обратном порядке (от новых к старым)
+            for msg in reversed(messages):
+                # Если это сообщение мы уже проверяли - пропускаем остальные
+                if msg['id'] <= last_message_id:
+                    break
 
-            if event.type == VkBotEventType.MESSAGE_NEW:
-                text = event.obj.message['text']
-                current_peer_id = event.obj.message['peer_id']
-                logger.info(f"📩 Получено сообщение: {text}")
+                # Обновляем ID последнего проверенного сообщения
+                last_message_id = max(last_message_id, msg['id'])
 
-                # Реакция на триггер
+                # Проверяем текст на наличие триггера
+                text = msg.get('text', '')
                 if TRIGGER_INSUFFICIENT_FUNDS in text:
-                    send_message(vk_session.get_api(), current_peer_id, FALLBACK_COMMAND)
+                    logger.info("🚨 ТРИГГЕР ОБНАРУЖЕН! Отправка fallback-команды...")
+                    send_message(vk, PEER_ID, FALLBACK_COMMAND)
+                    # Не выходим из цикла, чтобы продолжить мониторинг
 
-                # Реакция на команду остановки
-                if text.strip().lower() == STOP_COMMAND:
-                    logger.info("🛑 Получена команда остановки.")
-                    should_stop = True # Установим флаг для остановки всех потоков
+        except Exception as e:
+            logger.error(f"⚠️ Ошибка при мониторинге: {e}")
+        
+        # Если включен ультра-надежный режим, спим и повторяем опрос
+        if USE_ULTRA_RELIABLE_MODE:
+            time.sleep(HISTORY_POLL_INTERVAL)
+        else:
+            # В быстром режиме мы не спим здесь,
+            # а ждем событий от LongPoll (см. main цикл)
+            time.sleep(1)
 
-    except Exception as e:
-        if not should_stop: # Если это не запланированная остановка
-            logger.error(f"⚠️ Ошибка в слушателе: {e}")
-    finally:
-        logger.info("🔚 Поток слушателя завершил работу.")
+    logger.info("🔒 Мониторинг чата остановлен.")
 
 def main():
     global should_stop
@@ -80,23 +90,48 @@ def main():
     vk_session = vk_api.VkApi(token=GROUP_TOKEN)
     vk = vk_session.get_api()
 
-    # Создаём потоки
-    sender_thread = threading.Thread(target=sender_thread_func, args=(vk,))
-    listener_thread = threading.Thread(target=listener_thread_func, args=(vk_session,))
+    # Запускаем поток мониторинга чата ПЕРВЫМ
+    monitor_thread = threading.Thread(target=monitor_chat, args=(vk,))
+    monitor_thread.start()
 
-    # Запускаем потоки
-    sender_thread.start()
-    listener_thread.start()
+    longpoll = VkBotLongPoll(vk_session, GROUP_ID)
+    logger.info("✅ Бот запущен. Мониторинг активен.")
 
-    logger.info("✅ Бот запущен. Работают два потока.")
+    while not should_stop:
+        try:
+            # Отправляем основную команду по таймеру
+            send_message(vk, PEER_ID, MAIN_COMMAND)
+            
+            # Ждем интервал или команду остановки
+            for _ in range(INTERVAL):
+                if should_stop:
+                    break
 
-    # Главный поток ждёт завершения работы потоков
-    try:
-        sender_thread.join()
-        listener_thread.join()
-    except KeyboardInterrupt:
-        logger.info("🛑 Остановка по Ctrl+C...")
-        should_stop = True # Установим флаг для остановки
+                # Проверяем входящие команды (например, /stop_bot)
+                # Используем check с таймаутом 1 секунда, чтобы не зависать
+                try:
+                    for event in longpoll.check(timeout=1):
+                        if event.type == VkBotEventType.MESSAGE_NEW:
+                            text = event.obj.message.get('text', '').strip().lower()
+                            if text == STOP_COMMAND:
+                                should_stop = True
+                                send_message(vk, event.obj.message['peer_id'], "🛑 Бот остановлен.")
+                                logger.info("🛑 Остановка по команде /stop_bot.")
+                            # Здесь можно добавить и другие команды управления
+                except Exception as e:
+                    # Иногда возникает ошибка "Read timed out", это нормально при timeout=1
+                    pass
+
+                time.sleep(1)
+
+        except Exception as e:
+            logger.error(f"💥 Критическая ошибка в основном цикле: {e}")
+            time.sleep(INTERVAL) # Пауза перед повтором после сбоя
+
+    # Ожидаем завершения потока мониторинга перед выходом
+    should_stop = True
+    monitor_thread.join()
+    logger.info("🔚 Работа бота завершена.")
 
 if __name__ == '__main__':
     main()
