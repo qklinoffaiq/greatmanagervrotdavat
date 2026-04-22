@@ -10,7 +10,7 @@ GROUP_ID = 237218521
 PEER_ID = 2000000001  # 🛑 ЗАМЕНИТЕ НА ID ВАШЕЙ БЕСЕДЫ
 
 MAIN_COMMAND = "/клан казна положить 10000000"
-FALLBACK_COMMAND = "/клан снять 1364800000"
+FALLBACK_COMMAND = "/клан казна снять 1364800000"
 TRIGGER_INSUFFICIENT_FUNDS = "❌ Недостаточно средств!" # ТРИГГЕР ОБНОВЛЕН
 STOP_COMMAND = "/stop_bot"
 INTERVAL = 2
