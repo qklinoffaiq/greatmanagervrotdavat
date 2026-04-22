@@ -2,8 +2,7 @@ import vk_api
 import time
 import logging
 import threading
-# Импортируем оба необходимых класса из одного модуля
-from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType 
+from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 
 # --- ⚙️ НАСТРОЙКИ ⚙️ ---
 # ВСТАВЬТЕ СВОЙ ТОКЕН В СТРОЧКУ НИЖЕ:
@@ -20,10 +19,11 @@ INTERVAL = 5
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Глобальный флаг для остановки бота
 should_stop = False
-is_fallback_active = False 
 
 def send_message(vk, peer_id, message):
+    """Функция для отправки сообщения с обработкой ошибок."""
     try:
         vk.messages.send(peer_id=peer_id, message=message, random_id=0)
         logger.info(f"📤 Отправлено: {message}")
@@ -34,23 +34,24 @@ def send_message(vk, peer_id, message):
 
 def sender_loop(vk):
     """Поток для отправки основной команды."""
-    global should_stop, is_fallback_active
+    global should_stop
     logger.info("📤 Поток отправки команд запущен.")
+    
     while not should_stop:
-        # Отправляем команду только если не активен режим "fallback"
-        if not is_fallback_active:
-            send_message(vk, PEER_ID, MAIN_COMMAND)
+        # Основной цикл просто отправляет MAIN_COMMAND
+        # Логика реакции на ошибку перенесена в основной поток (слушатель)
+        send_message(vk, PEER_ID, MAIN_COMMAND)
         
-        # Пауза на INTERVAL секунд
+        # Пауза на INTERVAL секунд (с проверкой на остановку каждую секунду)
         for _ in range(INTERVAL):
             if should_stop:
                 break
             time.sleep(1)
+    
     logger.info("📤 Поток отправки команд остановлен.")
 
-
 def main():
-    global should_stop, is_fallback_active
+    global should_stop
 
     vk_session = vk_api.VkApi(token=GROUP_TOKEN)
     
@@ -75,9 +76,7 @@ def main():
     # --- ОСНОВНОЙ ПОТОК (СЛУШАЕТ СОБЫТИЯ) ---
     while not should_stop:
         try:
-            # Проверяем новые события от сервера VK
             for event in longpoll.check():
-                # Проверяем, что это новое сообщение
                 if event.type == VkBotEventType.MESSAGE_NEW:
                     text = event.obj.message.get('text', '').strip()
                     peer_id_msg = event.obj.message['peer_id']
@@ -91,13 +90,11 @@ def main():
                     # Обработка триггера "Недостаточно средств"
                     if TRIGGER_INSUFFICIENT_FUNDS in text:
                         logger.info("🚨 ТРИГГЕР ОБНАРУЖЕН! Отправка fallback-команды...")
-                        # Если команда успешно отправлена, блокируем основную логику
-                        if send_message(vk, PEER_ID, FALLBACK_COMMAND):
-                            is_fallback_active = True
-                            logger.info("⏸️ Режим 'Недостаточно средств' активирован. Основная команда будет пропущена в следующем цикле.")
-
+                        send_message(vk, PEER_ID, FALLBACK_COMMAND)
+                        logger.info("⏸️ Fallback-команда отправлена. Следующий цикл вернет основную команду.")
+        
         except Exception as e:
-            # Проходим мимо ошибок сети или таймаутов
+            logger.warning(f"⚠️ Ошибка в LongPoll: {e}")
             pass
 
     # Ждем завершения потока отправки перед полным выходом
